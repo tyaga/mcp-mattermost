@@ -6,6 +6,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 
 import { loadConfig } from './config/config';
 import { getMattermostMcpTools } from './handlers';
+import { createAuthMiddleware, parseAuthTokens } from './middleware/auth';
 import { logger } from './utils/logger';
 
 const PORT = parseInt(process.env.MCP_HTTP_PORT || '3002', 10);
@@ -37,6 +38,20 @@ async function main() {
   const app = express();
   app.use(express.json());
 
+  // Health check (before auth — always accessible)
+  app.get('/health', (_req, res) => {
+    res.json({ status: 'ok' });
+  });
+
+  // Token-based authentication
+  const tokenMap = parseAuthTokens(process.env.MCP_AUTH_TOKENS);
+  if (tokenMap) {
+    logger.info(`Authentication enabled (${tokenMap.size} token(s) configured)`);
+  } else {
+    logger.warn('Authentication disabled (MCP_AUTH_TOKENS not set)');
+  }
+  app.use(createAuthMiddleware(tokenMap));
+
   // Request logging middleware
   app.use((req, res, next) => {
     const start = Date.now();
@@ -45,8 +60,9 @@ async function main() {
     const methodName = body?.method;
     const toolName =
       methodName === 'tools/call' ? body?.params?.name : undefined;
+    const authUser = (req as typeof req & { authUser?: string }).authUser;
 
-    logger.debug(`--> ${method} ${path}`, methodName ? `jsonrpc=${methodName}` : '', toolName ? `tool=${toolName}` : '');
+    logger.debug(`--> ${method} ${path}`, authUser ? `user=${authUser}` : '', methodName ? `jsonrpc=${methodName}` : '', toolName ? `tool=${toolName}` : '');
 
     res.on('finish', () => {
       const duration = Date.now() - start;
@@ -55,6 +71,7 @@ async function main() {
         `${res.statusCode}`,
         `${duration}ms`,
       ];
+      if (authUser) parts.push(`user=${authUser}`);
       if (methodName) parts.push(`jsonrpc=${methodName}`);
       if (toolName) parts.push(`tool=${toolName}`);
       logger.info(parts.join(' | '));
@@ -128,11 +145,6 @@ async function main() {
         id: null,
       }),
     );
-  });
-
-  // Health check
-  app.get('/health', (_req, res) => {
-    res.json({ status: 'ok' });
   });
 
   app.listen(PORT, () => {

@@ -60,9 +60,21 @@ node build/http-server.js
 
 Additional environment variable:
 
-| Variable Name    | Description                        | Default |
-| ---------------- | ---------------------------------- | ------- |
-| `MCP_HTTP_PORT`  | HTTP server port                   | `3002`  |
+| Variable Name      | Description                                                              | Default |
+| ------------------ | ------------------------------------------------------------------------ | ------- |
+| `MCP_HTTP_PORT`    | HTTP server port                                                         | `3002`  |
+| `MCP_LOG_LEVEL`    | Log level: `debug`, `info`, `warn`, `error`, `silent`                    | `info`  |
+| `MCP_AUTH_TOKENS`  | Bearer token auth: comma-separated `username:token` pairs (see below)    | —       |
+
+### Authentication
+
+Set `MCP_AUTH_TOKENS` to enable Bearer token authentication. Format: `username:token` pairs separated by commas.
+
+```bash
+MCP_AUTH_TOKENS=alice:abc123secret,bob:xyz789secret
+```
+
+If `MCP_AUTH_TOKENS` is not set or empty, authentication is disabled (all requests are allowed). The `/health` endpoint is always accessible without authentication.
 
 ### Client configuration (Cursor IDE)
 
@@ -70,7 +82,10 @@ Additional environment variable:
 {
   "mcpServers": {
     "mcp-mattermost": {
-      "url": "https://your-server.example.com/mcp"
+      "url": "https://your-server.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer abc123secret"
+      }
     }
   }
 }
@@ -95,6 +110,8 @@ MCP_MATTERMOST_URL=https://your-mattermost.example.com/
 MCP_MATTERMOST_TOKEN=<token>
 MCP_MATTERMOST_TEAM_ID=<team-id>
 MCP_HTTP_PORT=3002
+MCP_LOG_LEVEL=info
+MCP_AUTH_TOKENS=alice:abc123secret,bob:xyz789secret
 ```
 
 3. Create a systemd service (`/etc/systemd/system/mcp-mattermost.service`):

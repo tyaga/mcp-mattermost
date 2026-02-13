@@ -24,7 +24,7 @@ export type MattermostConfig = z.infer<typeof configSchema>;
  */
 export function loadConfig(): MattermostConfig {
   const config = {
-    url: process.env.MCP_MATTERMOST_URL || '',
+    url: (process.env.MCP_MATTERMOST_URL || '').replace(/\/+$/, ''),
     token: process.env.MCP_MATTERMOST_TOKEN || '',
     teamNames: process.env.MCP_MATTERMOST_TEAM_NAME
       ? process.env.MCP_MATTERMOST_TEAM_NAME.split(',').map(s => s.trim())

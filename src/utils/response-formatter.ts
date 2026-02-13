@@ -1,6 +1,8 @@
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
+import { logger } from './logger';
+
 /**
  * Standard MCP response format
  */
@@ -15,7 +17,23 @@ export async function handleMcp<T>(promise: Promise<T>): Promise<McpResponse> {
   try {
     return formatSuccess(await promise);
   } catch (e) {
-    return formatError(`${e}`);
+    const errorMessage = `${e}`;
+    logger.error('Tool call failed:', errorMessage);
+    if (e instanceof Error && e.stack) {
+      logger.debug('Stack trace:', e.stack);
+    }
+    // Log additional properties from ClientError (from @mattermost/client)
+    if (typeof e === 'object' && e !== null) {
+      const err = e as Record<string, unknown>;
+      if (err.status_code || err.server_error_id || err.url) {
+        logger.error('Mattermost API error details:', {
+          status_code: err.status_code,
+          server_error_id: err.server_error_id,
+          url: err.url,
+        });
+      }
+    }
+    return formatError(errorMessage);
   }
 }
 

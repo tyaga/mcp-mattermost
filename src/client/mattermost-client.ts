@@ -5,6 +5,7 @@ import { Reaction } from '@mattermost/types/reactions';
 import { UserProfile } from '@mattermost/types/users';
 
 import { MattermostConfig } from '../config/config';
+import { logger } from '../utils/logger';
 
 /**
  * Wrapper for the Mattermost Client4 API client
@@ -212,9 +213,27 @@ export class MattermostClient {
     message: string;
     rootId?: string;
   }) {
-    return this.convertPost(
-      await this.client.createPost({ channel_id: channelId, message, root_id: rootId }),
-    );
+    const postData = { channel_id: channelId, message, root_id: rootId };
+    logger.debug('createPost request:', {
+      url: this.config.url,
+      postData: { channel_id: channelId, message, root_id: rootId },
+    });
+    try {
+      const result = await this.client.createPost(postData);
+      logger.debug('createPost success:', { postId: result.id });
+      return this.convertPost(result);
+    } catch (e) {
+      logger.error('createPost failed:', {
+        postData,
+        error: `${e}`,
+        errorDetails: typeof e === 'object' && e !== null ? {
+          status_code: (e as Record<string, unknown>).status_code,
+          server_error_id: (e as Record<string, unknown>).server_error_id,
+          url: (e as Record<string, unknown>).url,
+        } : undefined,
+      });
+      throw e;
+    }
   }
 
   /**

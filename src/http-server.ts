@@ -6,6 +6,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 
 import { loadConfig } from './config/config';
 import { getMattermostMcpTools } from './handlers';
+import { logger } from './utils/logger';
 
 const PORT = parseInt(process.env.MCP_HTTP_PORT || '3002', 10);
 
@@ -36,12 +37,38 @@ async function main() {
   const app = express();
   app.use(express.json());
 
+  // Request logging middleware
+  app.use((req, res, next) => {
+    const start = Date.now();
+    const { method, path } = req;
+    const body = req.body;
+    const methodName = body?.method;
+    const toolName =
+      methodName === 'tools/call' ? body?.params?.name : undefined;
+
+    logger.debug(`--> ${method} ${path}`, methodName ? `jsonrpc=${methodName}` : '', toolName ? `tool=${toolName}` : '');
+
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      const parts = [
+        `${method} ${path}`,
+        `${res.statusCode}`,
+        `${duration}ms`,
+      ];
+      if (methodName) parts.push(`jsonrpc=${methodName}`);
+      if (toolName) parts.push(`tool=${toolName}`);
+      logger.info(parts.join(' | '));
+    });
+
+    next();
+  });
+
   // Verify config + Mattermost connectivity on startup
   try {
     await createMcpServer();
-    console.log('Mattermost MCP server initialized successfully');
+    logger.info('Mattermost MCP server initialized successfully');
   } catch (e) {
-    console.error(`Failed to initialize: ${e instanceof Error ? e.message : String(e)}`);
+    logger.error(`Failed to initialize: ${e instanceof Error ? e.message : String(e)}`);
     process.exit(1);
   }
 
@@ -61,7 +88,7 @@ async function main() {
         server.close();
       });
     } catch (error) {
-      console.error('Error handling MCP request:', error);
+      logger.error('Error handling MCP request:', error);
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: '2.0',
@@ -109,16 +136,16 @@ async function main() {
   });
 
   app.listen(PORT, () => {
-    console.log(`MCP Mattermost HTTP Server listening on port ${PORT}`);
+    logger.info(`MCP Mattermost HTTP Server listening on port ${PORT} (log level: ${logger.level})`);
   });
 
   process.on('SIGINT', () => {
-    console.log('Shutting down server...');
+    logger.info('Shutting down server...');
     process.exit(0);
   });
 
   process.on('SIGTERM', () => {
-    console.log('Shutting down server...');
+    logger.info('Shutting down server...');
     process.exit(0);
   });
 }

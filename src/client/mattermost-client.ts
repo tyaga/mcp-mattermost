@@ -9,10 +9,11 @@ import { MattermostConfig } from '../config/config';
 /**
  * Wrapper for the Mattermost Client4 API client
  * Provides typed methods for interacting with the Mattermost API
+ * Supports multiple teams simultaneously
  */
 export class MattermostClient {
   private readonly client: Client4;
-  private teamId: string = '';
+  private teamIds: string[] = [];
   private readonly config: MattermostConfig;
 
   /**
@@ -24,30 +25,44 @@ export class MattermostClient {
     this.client.setUrl(config.url);
     this.client.setToken(config.token);
     this.config = config;
-
-    // If teamId is provided directly, use it
-    if (config.teamId) {
-      this.teamId = config.teamId;
-    }
   }
 
   async init() {
-    // If teamId is not set but teamName is provided, resolve team name to team ID
-    if (!this.teamId && this.config.teamName) {
-      const team = await this.client.getTeamByName(this.config.teamName);
-      if (!team) {
-        throw new Error(`Team with name '${this.config.teamName}' not found or not accessible`);
+    const resolvedIds: string[] = [];
+
+    // If teamIds are provided, validate each one
+    if (this.config.teamIds && this.config.teamIds.length > 0) {
+      for (const teamId of this.config.teamIds) {
+        const team = await this.client.getTeam(teamId);
+        if (!team) {
+          throw new Error(`Team with ID '${teamId}' not found or not accessible`);
+        }
+        resolvedIds.push(team.id);
       }
-      this.teamId = team.id;
-    } else if (this.teamId) {
-      // If teamId is provided, validate it exists
-      const team = await this.client.getTeam(this.teamId);
-      if (!team) {
-        throw new Error(`Team with ID '${this.teamId}' not found or not accessible`);
-      }
-    } else {
-      throw new Error('Either team name or team ID must be provided in configuration');
     }
+
+    // If teamNames are provided, resolve each to an ID
+    if (this.config.teamNames && this.config.teamNames.length > 0) {
+      for (const teamName of this.config.teamNames) {
+        const team = await this.client.getTeamByName(teamName);
+        if (!team) {
+          throw new Error(`Team with name '${teamName}' not found or not accessible`);
+        }
+        resolvedIds.push(team.id);
+      }
+    }
+
+    // If nothing was provided, auto-discover all teams the user/bot belongs to
+    if (resolvedIds.length === 0) {
+      const myTeams = await this.client.getMyTeams();
+      if (!myTeams || myTeams.length === 0) {
+        throw new Error('No teams found for the current user/bot');
+      }
+      resolvedIds.push(...myTeams.map(t => t.id));
+    }
+
+    // Deduplicate team IDs (in case both teamIds and teamNames resolve to the same team)
+    this.teamIds = [...new Set(resolvedIds)];
   }
 
   /**
@@ -72,15 +87,15 @@ export class MattermostClient {
   }
 
   /**
-   * Search users by term
+   * Search users by term (global search, not limited to a single team)
    */
   async searchUsers({ term }: { term: string }) {
-    const response = await this.client.searchUsers(term, { team_id: this.teamId });
+    const response = await this.client.searchUsers(term, {});
     return response.map(this.convertUserProfile);
   }
 
   /**
-   * Search channels by term
+   * Search channels by term across all configured teams
    */
   async searchChannels({
     term,
@@ -91,11 +106,11 @@ export class MattermostClient {
     page?: number;
     perPage?: number;
   }) {
-    if (!this.teamId) {
-      throw new Error('Team ID not set');
+    if (this.teamIds.length === 0) {
+      throw new Error('No teams configured');
     }
     return this.client.searchAllChannels(term, {
-      team_ids: [this.teamId],
+      team_ids: this.teamIds,
       page,
       per_page: perPage,
     });
@@ -109,17 +124,25 @@ export class MattermostClient {
   }
 
   /**
-   * Get a channel by name
+   * Get a channel by name (searches across all configured teams, returns first match)
    */
   async getChannelByName({ name }: { name: string }) {
-    if (!this.teamId) {
-      throw new Error('Team ID not set');
+    if (this.teamIds.length === 0) {
+      throw new Error('No teams configured');
     }
-    return this.convertChannel(await this.client.getChannelByName(this.teamId, name));
+    for (const teamId of this.teamIds) {
+      try {
+        const channel = await this.client.getChannelByName(teamId, name);
+        return this.convertChannel(channel);
+      } catch {
+        continue;
+      }
+    }
+    throw new Error(`Channel '${name}' not found in any configured team`);
   }
 
   /**
-   * Search posts by term
+   * Search posts by term across all configured teams
    */
   async searchPosts({
     terms,
@@ -130,16 +153,19 @@ export class MattermostClient {
     page?: number;
     perPage?: number;
   }) {
-    if (!this.teamId) {
-      throw new Error('Team ID not set');
+    if (this.teamIds.length === 0) {
+      throw new Error('No teams configured');
     }
-    return this.convertPostList(
-      await this.client.searchPostsWithParams(this.teamId, {
-        terms,
-        page,
-        per_page: perPage,
-      }),
+    const allResults = await Promise.all(
+      this.teamIds.map(teamId =>
+        this.client.searchPostsWithParams(teamId, {
+          terms,
+          page,
+          per_page: perPage,
+        }),
+      ),
     );
+    return this.mergePostLists(allResults);
   }
 
   /**
@@ -147,6 +173,21 @@ export class MattermostClient {
    */
   async getPost({ postId }: { postId: string }) {
     return this.convertPost(await this.client.getPost(postId));
+  }
+
+  /**
+   * Get recent posts in a channel
+   */
+  async getPostsForChannel({
+    channelId,
+    page = 0,
+    perPage = 30,
+  }: {
+    channelId: string;
+    page?: number;
+    perPage?: number;
+  }) {
+    return this.convertPostList(await this.client.getPosts(channelId, page, perPage));
   }
 
   /**
@@ -243,14 +284,41 @@ export class MattermostClient {
   }
 
   /**
-   * Get channels for the current user
+   * Get channels for the current user across all configured teams
    */
   async getMyChannels() {
-    if (!this.teamId) {
-      throw new Error('Team ID not set');
+    if (this.teamIds.length === 0) {
+      throw new Error('No teams configured');
     }
-    const channels = await this.client.getMyChannels(this.teamId);
-    return channels.filter(channel => ['O', 'P'].includes(channel.type)).map(this.convertChannel);
+    const allChannels = await Promise.all(
+      this.teamIds.map(teamId => this.client.getMyChannels(teamId)),
+    );
+    const merged = allChannels.flat();
+    // Deduplicate by channel ID
+    const unique = [...new Map(merged.map(ch => [ch.id, ch])).values()];
+    return unique.filter(channel => ['O', 'P'].includes(channel.type)).map(this.convertChannel);
+  }
+
+  /**
+   * Merge multiple PostList results into a single PostList, deduplicating by post ID
+   */
+  private mergePostLists(postLists: PostList[]) {
+    const mergedPosts: Record<string, Post> = {};
+    const orderSet = new Set<string>();
+
+    for (const postList of postLists) {
+      for (const postId of postList.order) {
+        if (!orderSet.has(postId)) {
+          orderSet.add(postId);
+        }
+        mergedPosts[postId] = postList.posts[postId];
+      }
+    }
+
+    return this.convertPostList({
+      order: [...orderSet],
+      posts: mergedPosts,
+    } as PostList);
   }
 
   private convertPost(post: Post) {

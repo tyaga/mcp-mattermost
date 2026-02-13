@@ -29,6 +29,21 @@ export class HandlerPost extends AbstractHandler {
   }
 
   /**
+   * Get recent posts in a channel
+   */
+  private async getPostsForChannel({
+    channelId,
+    page,
+    perPage,
+  }: {
+    channelId: string;
+    page?: number;
+    perPage?: number;
+  }) {
+    return this.client.getPostsForChannel({ channelId, page, perPage });
+  }
+
+  /**
    * Get unread posts in a channel
    */
   private async getPostsUnread({ channelId }: { channelId: string }) {
@@ -124,6 +139,30 @@ export class HandlerPost extends AbstractHandler {
         },
         handler: async ({ postId }: { postId: string }) => {
           return this.getPosts({ postId: postId.split(',').map(v => v.trim()) });
+        },
+      }),
+      this.createMcpTool({
+        name: 'mattermost_get_channel_posts',
+        description:
+          'Get recent posts in a channel. Returns posts in reverse chronological order (newest first). Use page and perPage parameters for pagination.',
+        parameter: {
+          channelId: z.string().describe('Channel ID to get posts from'),
+          page: z.number().optional().describe('Page number (0-based, default: 0)'),
+          perPage: z
+            .number()
+            .optional()
+            .describe('Number of posts per page (default: 30, max: 200)'),
+        },
+        handler: async ({
+          channelId,
+          page,
+          perPage,
+        }: {
+          channelId: string;
+          page?: number;
+          perPage?: number;
+        }) => {
+          return this.getPostsForChannel({ channelId, page, perPage });
         },
       }),
       this.createMcpTool({

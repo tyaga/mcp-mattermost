@@ -5,6 +5,9 @@ jest.mock('../../client/mattermost-client', () => ({
   MattermostClient: jest.fn().mockImplementation(() => ({
     searchPosts: jest.fn().mockResolvedValue([{ id: 'test-post-id', message: 'test-post' }]),
     getPost: jest.fn().mockResolvedValue({ id: 'test-post-id', message: 'test-post' }),
+    getPostsForChannel: jest
+      .fn()
+      .mockResolvedValue({ order: ['test-post-id'], posts: { 'test-post-id': { id: 'test-post-id', message: 'test-post' } } }),
     getPostsUnread: jest.fn().mockResolvedValue([{ id: 'test-post-id', message: 'test-post' }]),
     createPost: jest.fn().mockResolvedValue({ id: 'new-post-id', message: 'new-post' }),
     getPostsThread: jest.fn().mockResolvedValue([{ id: 'test-post-id', message: 'test-post' }]),
@@ -18,13 +21,13 @@ describe('HandlerPost', () => {
   const client = new MattermostClient({
     url: 'https://example.com',
     token: 'test-token',
-    teamName: 'test-team-name',
+    teamNames: ['test-team-name'],
   });
   const handler = new HandlerPost(client);
 
   it('should get MCP tools', () => {
     const tools = handler.getMcpTools();
-    expect(tools).toHaveLength(8);
+    expect(tools).toHaveLength(9);
   });
 
   it('should search posts', async () => {
@@ -50,6 +53,19 @@ describe('HandlerPost', () => {
       expect(result.content).toBeInstanceOf(Array);
     } else {
       fail('mattermost_get_posts tool not found');
+    }
+  });
+
+  it('should get recent posts in a channel', async () => {
+    const tools = handler.getMcpTools();
+    const getChannelPostsTool = tools.find(tool => tool.name === 'mattermost_get_channel_posts');
+    if (getChannelPostsTool) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await getChannelPostsTool.handler({ channelId: 'test-channel-id' } as any);
+      expect(result.isError).toBe(false);
+      expect(result.content).toBeInstanceOf(Array);
+    } else {
+      fail('mattermost_get_channel_posts tool not found');
     }
   });
 

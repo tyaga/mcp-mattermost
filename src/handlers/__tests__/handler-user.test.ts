@@ -13,7 +13,7 @@ describe('HandlerUser', () => {
   const client = new MattermostClient({
     url: 'https://example.com',
     token: 'test-token',
-    teamName: 'test-team-name',
+    teamNames: ['test-team-name'],
   });
   const handler = new HandlerUser(client);
 

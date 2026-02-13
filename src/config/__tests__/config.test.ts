@@ -9,7 +9,7 @@ describe('loadConfig', () => {
     delete process.env.MCP_MATTERMOST_TEAM_ID;
   });
 
-  it('should load config with team name', () => {
+  it('should load config with a single team name', () => {
     process.env.MCP_MATTERMOST_URL = 'https://example.com';
     process.env.MCP_MATTERMOST_TOKEN = 'test-token';
     process.env.MCP_MATTERMOST_TEAM_NAME = 'test-team-name';
@@ -18,12 +18,12 @@ describe('loadConfig', () => {
     expect(config).toEqual({
       url: 'https://example.com',
       token: 'test-token',
-      teamName: 'test-team-name',
-      teamId: undefined,
+      teamNames: ['test-team-name'],
+      teamIds: undefined,
     });
   });
 
-  it('should load config with team ID', () => {
+  it('should load config with a single team ID', () => {
     process.env.MCP_MATTERMOST_URL = 'https://example.com';
     process.env.MCP_MATTERMOST_TOKEN = 'test-token';
     process.env.MCP_MATTERMOST_TEAM_ID = 'test-team-id';
@@ -32,12 +32,40 @@ describe('loadConfig', () => {
     expect(config).toEqual({
       url: 'https://example.com',
       token: 'test-token',
-      teamName: undefined,
-      teamId: 'test-team-id',
+      teamNames: undefined,
+      teamIds: ['test-team-id'],
     });
   });
 
-  it('should load config with both team name and team ID', () => {
+  it('should load config with multiple comma-separated team names', () => {
+    process.env.MCP_MATTERMOST_URL = 'https://example.com';
+    process.env.MCP_MATTERMOST_TOKEN = 'test-token';
+    process.env.MCP_MATTERMOST_TEAM_NAME = 'team-a, team-b, team-c';
+
+    const config = loadConfig();
+    expect(config).toEqual({
+      url: 'https://example.com',
+      token: 'test-token',
+      teamNames: ['team-a', 'team-b', 'team-c'],
+      teamIds: undefined,
+    });
+  });
+
+  it('should load config with multiple comma-separated team IDs', () => {
+    process.env.MCP_MATTERMOST_URL = 'https://example.com';
+    process.env.MCP_MATTERMOST_TOKEN = 'test-token';
+    process.env.MCP_MATTERMOST_TEAM_ID = 'id1,id2,id3';
+
+    const config = loadConfig();
+    expect(config).toEqual({
+      url: 'https://example.com',
+      token: 'test-token',
+      teamNames: undefined,
+      teamIds: ['id1', 'id2', 'id3'],
+    });
+  });
+
+  it('should load config with both team names and team IDs', () => {
     process.env.MCP_MATTERMOST_URL = 'https://example.com';
     process.env.MCP_MATTERMOST_TOKEN = 'test-token';
     process.env.MCP_MATTERMOST_TEAM_NAME = 'test-team-name';
@@ -47,18 +75,22 @@ describe('loadConfig', () => {
     expect(config).toEqual({
       url: 'https://example.com',
       token: 'test-token',
-      teamName: 'test-team-name',
-      teamId: 'test-team-id',
+      teamNames: ['test-team-name'],
+      teamIds: ['test-team-id'],
     });
   });
 
-  it('should throw an error when neither team name nor team ID is provided', () => {
+  it('should load config without team name or team ID (auto-discover mode)', () => {
     process.env.MCP_MATTERMOST_URL = 'https://example.com';
     process.env.MCP_MATTERMOST_TOKEN = 'test-token';
 
-    expect(() => loadConfig()).toThrow(
-      'Either team name (MCP_MATTERMOST_TEAM_NAME) or team ID (MCP_MATTERMOST_TEAM_ID) must be provided',
-    );
+    const config = loadConfig();
+    expect(config).toEqual({
+      url: 'https://example.com',
+      token: 'test-token',
+      teamNames: undefined,
+      teamIds: undefined,
+    });
   });
 
   it('should throw an error for invalid URL', () => {

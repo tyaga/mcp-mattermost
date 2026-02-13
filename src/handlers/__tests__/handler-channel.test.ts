@@ -14,7 +14,7 @@ describe('HandlerChannel', () => {
   const client = new MattermostClient({
     url: 'http://localhost',
     token: 'test-token',
-    teamName: 'test-team-name',
+    teamNames: ['test-team-name'],
   });
   const handler = new HandlerChannel(client);
 

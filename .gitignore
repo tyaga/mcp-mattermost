@@ -219,6 +219,7 @@ $RECYCLE.BIN/
 
 # Developer tools
 .vscode
+.cursor
 .idea
 memory-bank
 

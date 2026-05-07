@@ -11,28 +11,28 @@ import { logger } from './utils/logger';
 
 const PORT = parseInt(process.env.MCP_HTTP_PORT || '3002', 10);
 
+type McpTools = Awaited<ReturnType<typeof getMattermostMcpTools>>;
+
 /**
- * Create and configure a new MCP server instance with all Mattermost tools.
- * Used in stateless mode: each request gets a fresh server.
+ * Build a fresh `McpServer` from a pre-built tool list. Stateless mode requires
+ * a new transport+server pair per request, but the underlying Mattermost client
+ * (and the `init()` round-trips it performs) can — and should — be reused.
  */
-async function createMcpServer() {
-  const config = loadConfig();
+function createMcpServer(tools: McpTools): McpServer {
   const server = new McpServer({
     name: 'mcp-mattermost',
     version: '0.0.5',
   });
-
-  const tools = await getMattermostMcpTools(config);
   tools.forEach(tool => {
     server.tool(tool.name, tool.description, tool.parameter, tool.handler);
   });
-
   return server;
 }
 
 /**
  * Main entry point for the Mattermost MCP HTTP server (Streamable HTTP transport).
- * Runs in stateless mode — each POST /mcp creates a new server + transport pair.
+ * Runs in stateless mode — each POST /mcp creates a new server + transport pair,
+ * but reuses the shared, already-initialized Mattermost client and tool list.
  */
 async function main() {
   const app = express();
@@ -80,19 +80,23 @@ async function main() {
     next();
   });
 
-  // Verify config + Mattermost connectivity on startup
+  // Initialize the Mattermost client + tool list ONCE at startup. Re-running
+  // this on every POST /mcp would re-issue all team-resolution requests and
+  // significantly inflate per-request latency.
+  let tools: McpTools;
   try {
-    await createMcpServer();
+    const config = loadConfig();
+    tools = await getMattermostMcpTools(config);
     logger.info('Mattermost MCP server initialized successfully');
   } catch (e) {
     logger.error(`Failed to initialize: ${e instanceof Error ? e.message : String(e)}`);
     process.exit(1);
   }
 
-  // POST /mcp — handle MCP JSON-RPC requests (stateless)
+  // POST /mcp — handle MCP JSON-RPC requests (stateless transport, shared tools)
   app.post('/mcp', async (req, res) => {
     try {
-      const server = await createMcpServer();
+      const server = createMcpServer(tools);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
       });

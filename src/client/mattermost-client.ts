@@ -16,6 +16,9 @@ export class MattermostClient {
   private readonly client: Client4;
   private teamIds: string[] = [];
   private readonly config: MattermostConfig;
+  // Lazy cache for the current user. `me.id` does not change for the lifetime
+  // of the bot/token, so it is safe to memoise across reaction/unread calls.
+  private cachedMe: Promise<UserProfile> | null = null;
 
   /**
    * Create a new Mattermost client
@@ -31,26 +34,32 @@ export class MattermostClient {
   async init() {
     const resolvedIds: string[] = [];
 
-    // If teamIds are provided, validate each one
+    // Validate provided teamIds in parallel
     if (this.config.teamIds && this.config.teamIds.length > 0) {
-      for (const teamId of this.config.teamIds) {
-        const team = await this.client.getTeam(teamId);
-        if (!team) {
-          throw new Error(`Team with ID '${teamId}' not found or not accessible`);
-        }
-        resolvedIds.push(team.id);
-      }
+      const teams = await Promise.all(
+        this.config.teamIds.map(async teamId => {
+          const team = await this.client.getTeam(teamId);
+          if (!team) {
+            throw new Error(`Team with ID '${teamId}' not found or not accessible`);
+          }
+          return team;
+        }),
+      );
+      resolvedIds.push(...teams.map(t => t.id));
     }
 
-    // If teamNames are provided, resolve each to an ID
+    // Resolve provided teamNames to IDs in parallel
     if (this.config.teamNames && this.config.teamNames.length > 0) {
-      for (const teamName of this.config.teamNames) {
-        const team = await this.client.getTeamByName(teamName);
-        if (!team) {
-          throw new Error(`Team with name '${teamName}' not found or not accessible`);
-        }
-        resolvedIds.push(team.id);
-      }
+      const teams = await Promise.all(
+        this.config.teamNames.map(async teamName => {
+          const team = await this.client.getTeamByName(teamName);
+          if (!team) {
+            throw new Error(`Team with name '${teamName}' not found or not accessible`);
+          }
+          return team;
+        }),
+      );
+      resolvedIds.push(...teams.map(t => t.id));
     }
 
     // If nothing was provided, auto-discover all teams the user/bot belongs to
@@ -67,10 +76,25 @@ export class MattermostClient {
   }
 
   /**
+   * Resolve the raw current-user profile, memoised across calls. On failure the
+   * cache is cleared so the next call retries instead of returning a stuck
+   * rejected promise.
+   */
+  private getMeRaw(): Promise<UserProfile> {
+    if (!this.cachedMe) {
+      this.cachedMe = this.client.getMe().catch(e => {
+        this.cachedMe = null;
+        throw e;
+      });
+    }
+    return this.cachedMe;
+  }
+
+  /**
    * Get the current user
    */
   async getMe() {
-    return this.convertUserProfile(await this.client.getMe());
+    return this.convertUserProfile(await this.getMeRaw());
   }
 
   /**
@@ -125,21 +149,21 @@ export class MattermostClient {
   }
 
   /**
-   * Get a channel by name (searches across all configured teams, returns first match)
+   * Get a channel by name (searches across all configured teams in parallel,
+   * returns the first successful match instead of probing teams sequentially).
    */
   async getChannelByName({ name }: { name: string }) {
     if (this.teamIds.length === 0) {
       throw new Error('No teams configured');
     }
-    for (const teamId of this.teamIds) {
-      try {
-        const channel = await this.client.getChannelByName(teamId, name);
-        return this.convertChannel(channel);
-      } catch {
-        continue;
-      }
+    try {
+      const channel = await Promise.any(
+        this.teamIds.map(teamId => this.client.getChannelByName(teamId, name)),
+      );
+      return this.convertChannel(channel);
+    } catch {
+      throw new Error(`Channel '${name}' not found in any configured team`);
     }
-    throw new Error(`Channel '${name}' not found in any configured team`);
   }
 
   /**
@@ -195,7 +219,7 @@ export class MattermostClient {
    * Get unread posts in a channel
    */
   async getPostsUnread({ channelId }: { channelId: string }) {
-    const me = await this.client.getMe();
+    const me = await this.getMeRaw();
     return this.convertPostList(
       await this.client.getPostsUnread(channelId, me.id, DEFAULT_LIMIT_AFTER, 0, true),
     );
@@ -261,7 +285,7 @@ export class MattermostClient {
    * Add a reaction to a post
    */
   async addReaction({ postId, emojiName }: { postId: string; emojiName: string }) {
-    const me = await this.client.getMe();
+    const me = await this.getMeRaw();
     return this.convertReaction(await this.client.addReaction(me.id, postId, emojiName));
   }
 
@@ -269,7 +293,7 @@ export class MattermostClient {
    * Remove a reaction from a post
    */
   async removeReaction({ postId, emojiName }: { postId: string; emojiName: string }) {
-    const me = await this.client.getMe();
+    const me = await this.getMeRaw();
     return this.client.removeReaction(me.id, postId, emojiName);
   }
 
@@ -351,19 +375,17 @@ export class MattermostClient {
   }
 
   private convertPostList(postList: PostList) {
-    return {
-      ...postList,
-      posts: postList.order.reduce(
-        (acc, postId) => ({
-          ...acc,
-          [postId]: {
-            ...postList.posts[postId],
-            ...this.convertPost(postList.posts[postId]),
-          },
-        }),
-        {},
-      ),
-    };
+    // Use a single-pass loop instead of reduce+spread (which is O(n²) due to
+    // copying the accumulator on every iteration). `convertPost` already
+    // spreads the source post, so no extra outer spread is needed.
+    const posts: Record<string, ReturnType<typeof this.convertPost>> = {};
+    for (const postId of postList.order) {
+      const raw = postList.posts[postId];
+      if (raw) {
+        posts[postId] = this.convertPost(raw);
+      }
+    }
+    return { ...postList, posts };
   }
 
   private convertReaction(reaction: Reaction) {

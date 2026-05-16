@@ -1,7 +1,7 @@
 {
-  "name": "@tyaga/mcp-mattermost",
-  "version": "0.0.6",
-  "author": "dakatan <tkdtkd0022@gmail.com>, tyaga <atyaga@gmail.com>",
+  "name": "@atyaga/mcp-mattermost",
+  "version": "0.0.9",
+  "author": "dakatan <tkdtkd0022@gmail.com>, atyaga <atyaga@gmail.com>",
   "license": "MIT",
   "description": "MCP (Model Context Protocol) server for Mattermost",
   "repository": "https://github.com/tyaga/mcp-mattermost",
@@ -25,9 +25,10 @@
     "test": "jest"
   },
   "bin": {
-    "@tyaga/mcp-mattermost": "build/index.js"
+    "mcp-mattermost": "build/index.js"
   },
   "dependencies": {
+    "@atyaga/mcp-mattermost": "^0.0.9",
     "@mattermost/client": "^10.6.0",
     "@modelcontextprotocol/sdk": "^1.11.0",
     "express": "^5.2.1",
